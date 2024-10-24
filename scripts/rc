@@ -1,0 +1,17 @@
+#!/bin/ksh
+
+daemon="/usr/local/bin/mctsd"
+daemon_user=_rspamd
+daemon_flags=
+daemon_logger=
+daemon_execdir=/
+rc_stop_signal=TERM
+rc_reload_signal=HUP
+
+. /etc/rc.d/rc.subr
+
+rc_start() {
+    rc_exec "${daemon} ${daemon_flags}"
+}
+
+rc_cmd $1

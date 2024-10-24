@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"github.com/sevlyar/go-daemon"
@@ -20,8 +19,10 @@ import (
 )
 
 const SHUTDOWN_TIMEOUT = 5
-const QUEUE_SIZE = 8
+const QUEUE_SIZE = 256 * 1024
 const DEFAULT_PORT = 2015
+
+var verbose bool
 
 type Response struct {
 	Message string `json:"message"`
@@ -43,7 +44,9 @@ func NewSample(class, username string) *Sample {
 }
 
 func (s *Sample) Submit() {
-	log.Printf("Submitting %s %s", s.username, s.class)
+	if verbose {
+		log.Printf("Submitting %s %s", s.username, s.class)
+	}
 	cmd := exec.Command("rspamc", "-u", s.username, "learn_"+s.class)
 	var oBuf bytes.Buffer
 	var eBuf bytes.Buffer
@@ -75,6 +78,9 @@ func (s *Sample) Submit() {
 		log.Printf("rspamc stdout: %s", stdout)
 	}
 
+	// debugging delay
+	//time.Sleep(1 * time.Second)
+
 }
 
 var (
@@ -91,23 +97,19 @@ func fail(w http.ResponseWriter, message string, status int) {
 	http.Error(w, message, status)
 }
 
-func respond(w http.ResponseWriter, response any) {
-	log.Printf("  [200] %v", response)
-	json.NewEncoder(w).Encode(response)
-}
-
 var queue chan *Sample
 var queueCount int
 var dequeueCount int
 
 func handleEndpoints(w http.ResponseWriter, r *http.Request) {
 
-	log.Printf("%s %s %s (%d)\n", r.RemoteAddr, r.Method, r.RequestURI, r.ContentLength)
+	if verbose {
+		log.Printf("%s %s %s (%d)\n", r.RemoteAddr, r.Method, r.RequestURI, r.ContentLength)
+	}
 	switch r.Method {
 	case "POST":
 		if strings.HasPrefix(r.URL.Path, "/learn/") {
 			path := strings.Split(r.URL.Path[7:], "/")
-			log.Printf("len=%d path=%v\n", len(path), path)
 			if len(path) != 2 {
 				fail(w, "invalid path", http.StatusBadRequest)
 				return
@@ -144,9 +146,10 @@ func handleEndpoints(w http.ResponseWriter, r *http.Request) {
 
 			queue <- sample
 			queueCount++
-			log.Printf("queued %s %s sample: queueCount=%d dequeCount=%d\n", username, class, queueCount, dequeueCount)
+			if verbose {
+				log.Printf("queued %s %s sample: queueCount=%d dequeCount=%d\n", username, class, queueCount, dequeueCount)
+			}
 
-			respond(w, Response{Message: fmt.Sprintf("%s %s sample added", username, class)})
 			return
 		}
 	default:
@@ -173,7 +176,9 @@ func runServer(addr *string, port *int) {
 		defer wg.Done()
 		for job := range queue {
 			dequeueCount++
-			log.Printf("Dequeued %s %s sample: queueCount=%d dequeueCount=%d\n", job.username, job.class, queueCount, dequeueCount)
+			if verbose {
+				log.Printf("Dequeued %s %s sample: queueCount=%d dequeueCount=%d\n", job.username, job.class, queueCount, dequeueCount)
+			}
 			job.Submit()
 		}
 	}()
@@ -221,8 +226,10 @@ func reloadHandler(sig os.Signal) error {
 func main() {
 	addr := flag.String("addr", "127.0.0.1", "listen address")
 	port := flag.Int("port", DEFAULT_PORT, "listen port")
+	verboseFlag := flag.Bool("verbose", false, "write non-error output to log")
 	debugFlag := flag.Bool("debug", false, "run in foreground mode")
 	flag.Parse()
+	verbose = *verboseFlag
 	if !*debugFlag {
 		daemonize(addr, port)
 		os.Exit(0)
@@ -241,7 +248,7 @@ func daemonize(addr *string, port *int) {
 	daemon.AddCommand(daemon.StringFlag(signalFlag, "reload"), syscall.SIGHUP, reloadHandler)
 
 	ctx := &daemon.Context{
-		LogFileName: "/var/log/nbd.log",
+		LogFileName: "/var/log/mctsd.log",
 		LogFilePerm: 0600,
 		WorkDir:     "/",
 		Umask:       007,

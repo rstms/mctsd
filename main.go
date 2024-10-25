@@ -176,6 +176,10 @@ func handleEndpoints(w http.ResponseWriter, r *http.Request) {
 
 }
 
+func Banner() string {
+	return fmt.Sprintf("mctsd v%s", Version)
+}
+
 func runServer(addr *string, port *int) {
 
 	queue = make(chan *Sample, QUEUE_SIZE)
@@ -199,7 +203,7 @@ func runServer(addr *string, port *int) {
 	}()
 
 	go func() {
-		log.Printf("mctsd v%s started as PID %d listening on %s\n", Version, os.Getpid(), listen)
+		log.Printf("%s started as PID %d listening on %s\n", Banner(), os.Getpid(), listen)
 		err := server.ListenAndServe()
 		if err != nil && err != http.ErrServerClosed {
 			log.Fatalln("ListenAndServe failed: ", err)
@@ -243,7 +247,12 @@ func main() {
 	port := flag.Int("port", DEFAULT_PORT, "listen port")
 	verboseFlag := flag.Bool("verbose", false, "write non-error output to log")
 	debugFlag := flag.Bool("debug", false, "run in foreground mode")
+	versionFlag := flag.Bool("version", false, "show version and exit")
 	flag.Parse()
+	if *versionFlag {
+		fmt.Printf("%s\n", Banner())
+		os.Exit(0)
+	}
 	verbose = *verboseFlag
 	if !*debugFlag {
 		daemonize(addr, port)

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -85,17 +86,19 @@ func HandleEndpoints(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			sample := NewSample(class, username, domains)
-			_, err = io.Copy(sample.Buf, uploadFile)
+			var buf bytes.Buffer
+			count, err := io.Copy(&buf, uploadFile)
 			if err != nil {
 				fail(w, err.Error(), http.StatusBadRequest)
 				return
 			}
+			message := buf.Bytes()
+			sample := NewSample(class, username, domains, &message)
 
 			Queue <- sample
 			QueueCount++
 			if Verbose {
-				log.Printf("queued %s %s sample: queueCount=%d dequeCount=%d\n", username, class, QueueCount, DequeueCount)
+				log.Printf("queued %s %s sample: byteCount=%v queueCount=%d dequeCount=%d\n", username, class, count, QueueCount, DequeueCount)
 			}
 
 			return

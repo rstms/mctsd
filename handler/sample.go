@@ -5,34 +5,42 @@ import (
 	"fmt"
 	"log"
 	"os/exec"
+	"strings"
 )
 
 type Sample struct {
 	Username string
 	Class    string
 	Domains  []string
-	Buf      *bytes.Buffer
+	Message  *[]byte
 }
 
-func NewSample(class, username string, domains []string) *Sample {
+func NewSample(class, username string, domains []string, message *[]byte) *Sample {
 	var sample Sample
 	sample.Class = class
 	sample.Username = username
 	sample.Domains = domains
-	var buf bytes.Buffer
-	sample.Buf = &buf
+	sample.Message = message
 	return &sample
 }
 
 func (s *Sample) Submit() {
 	if Verbose {
-		log.Printf("Submitting %s %s", s.Username, s.Class)
+		log.Printf("Submitting %s %s domains=%v\n", s.Username, s.Class, s.Domains)
 	}
-	for domain := range s.Domains {
-		cmd := exec.Command("rspamc", "-d", fmt.Sprintf("%s@%s", s.Username, domain), "learn_"+s.Class)
+	for _, domain := range s.Domains {
+		args := []string{"-d", fmt.Sprintf("%s@%s", s.Username, domain)}
+		if Verbose {
+			args = append(args, "-v")
+		}
+		args = append(args, "learn_"+s.Class)
+		if Verbose {
+			log.Printf("cmd=rspamc %s\n", strings.Join(args, " "))
+		}
+		cmd := exec.Command("rspamc", args...)
+		cmd.Stdin = bytes.NewBuffer(*s.Message)
 		var oBuf bytes.Buffer
 		var eBuf bytes.Buffer
-		cmd.Stdin = s.Buf
 		cmd.Stdout = &oBuf
 		cmd.Stderr = &eBuf
 		exitCode := -1

@@ -133,7 +133,11 @@ func handleEndpoints(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if verbose {
-				log.Printf("client cert dn: %s\n", usernameHeader)
+				log.Printf("client cert dn: %s\n", usernameHeader[0])
+			}
+			if usernameHeader[0] != "DN="+username {
+				fail(w, fmt.Sprintf("client cert (%s) != path username (%s)", usernameHeader[0], username), http.StatusBadRequest)
+				return
 			}
 			err := r.ParseMultipartForm(256 << 20) // limit file size to 256MB
 			if err != nil {

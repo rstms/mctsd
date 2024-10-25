@@ -22,6 +22,8 @@ const SHUTDOWN_TIMEOUT = 5
 const QUEUE_SIZE = 256 * 1024
 const DEFAULT_PORT = 2015
 
+const Version = "0.1.0"
+
 var verbose bool
 
 type Response struct {
@@ -124,6 +126,15 @@ func handleEndpoints(w http.ResponseWriter, r *http.Request) {
 				fail(w, "invalid user", http.StatusBadRequest)
 				return
 			}
+
+			usernameHeader, ok := r.Header["X-Client-Cert-Dn"]
+			if !ok {
+				fail(w, "missing client cert DN", http.StatusBadRequest)
+				return
+			}
+			if verbose {
+				log.Printf("client cert dn: %s\n", usernameHeader)
+			}
 			err := r.ParseMultipartForm(256 << 20) // limit file size to 256MB
 			if err != nil {
 				fail(w, fmt.Sprintf("failed parsing upload form: %v", err), http.StatusBadRequest)
@@ -184,7 +195,7 @@ func runServer(addr *string, port *int) {
 	}()
 
 	go func() {
-		log.Printf("mctsd started as PID %d listening on %s\n", os.Getpid(), listen)
+		log.Printf("mctsd v%s started as PID %d listening on %s\n", Version, os.Getpid(), listen)
 		err := server.ListenAndServe()
 		if err != nil && err != http.ErrServerClosed {
 			log.Fatalln("ListenAndServe failed: ", err)

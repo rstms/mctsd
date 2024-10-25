@@ -135,7 +135,7 @@ func handleEndpoints(w http.ResponseWriter, r *http.Request) {
 			if verbose {
 				log.Printf("client cert dn: %s\n", usernameHeader[0])
 			}
-			if usernameHeader[0] != "DN="+username {
+			if usernameHeader[0] != "CN="+username {
 				fail(w, fmt.Sprintf("client cert (%s) != path username (%s)", usernameHeader[0], username), http.StatusBadRequest)
 				return
 			}

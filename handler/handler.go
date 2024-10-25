@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -76,7 +77,15 @@ func HandleEndpoints(w http.ResponseWriter, r *http.Request) {
 			}
 			defer uploadFile.Close()
 
-			sample := NewSample(class, username)
+			domainsString := r.FormValue("domains")
+			var domains []string
+			err = json.Unmarshal([]byte(domainsString), &domains)
+			if err != nil {
+				fail(w, "Failed to unmarshal domains", http.StatusBadRequest)
+				return
+			}
+
+			sample := NewSample(class, username, domains)
 			_, err = io.Copy(sample.Buf, uploadFile)
 			if err != nil {
 				fail(w, err.Error(), http.StatusBadRequest)

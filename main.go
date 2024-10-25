@@ -1,18 +1,15 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"flag"
 	"fmt"
+	"github.com/rstms/mctsd/handler"
 	"github.com/sevlyar/go-daemon"
-	"io"
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -30,61 +27,6 @@ type Response struct {
 	Message string `json:"message"`
 }
 
-type Sample struct {
-	username string
-	class    string
-	buf      *bytes.Buffer
-}
-
-func NewSample(class, username string) *Sample {
-	var sample Sample
-	sample.class = class
-	sample.username = username
-	var buf bytes.Buffer
-	sample.buf = &buf
-	return &sample
-}
-
-func (s *Sample) Submit() {
-	if verbose {
-		log.Printf("Submitting %s %s", s.username, s.class)
-	}
-	cmd := exec.Command("rspamc", "-u", s.username, "learn_"+s.class)
-	var oBuf bytes.Buffer
-	var eBuf bytes.Buffer
-	cmd.Stdin = s.buf
-	cmd.Stdout = &oBuf
-	cmd.Stderr = &eBuf
-	exitCode := -1
-	err := cmd.Run()
-	if err != nil {
-		switch e := err.(type) {
-		case *exec.ExitError:
-			exitCode = e.ExitCode()
-		default:
-			log.Printf("rspamc error: %v", err)
-			return
-		}
-	} else {
-		exitCode = cmd.ProcessState.ExitCode()
-	}
-	if exitCode != 0 {
-		log.Printf("rspamc exited: %d", exitCode)
-	}
-	stderr := eBuf.String()
-	if stderr != "" {
-		log.Printf("rspamc stderr: %s", stderr)
-	}
-	stdout := oBuf.String()
-	if stdout != "" {
-		log.Printf("rspamc stdout: %s", stdout)
-	}
-
-	// debugging delay
-	//time.Sleep(1 * time.Second)
-
-}
-
 var (
 	signalFlag = flag.String("s", "", `send signal:
     stop - shutdown
@@ -94,109 +36,30 @@ var (
 	reload   = make(chan struct{})
 )
 
-func fail(w http.ResponseWriter, message string, status int) {
-	log.Printf("  [%d] %s", status, message)
-	http.Error(w, message, status)
-}
-
-var queue chan *Sample
-var queueCount int
-var dequeueCount int
-
-func handleEndpoints(w http.ResponseWriter, r *http.Request) {
-
-	if verbose {
-		log.Printf("%s %s %s (%d)\n", r.RemoteAddr, r.Method, r.RequestURI, r.ContentLength)
-	}
-	switch r.Method {
-	case "POST":
-		if strings.HasPrefix(r.URL.Path, "/learn/") {
-			path := strings.Split(r.URL.Path[7:], "/")
-			if len(path) != 2 {
-				fail(w, "invalid path", http.StatusBadRequest)
-				return
-			}
-			class := path[0]
-			username := path[1]
-			if class != "ham" && class != "spam" {
-				fail(w, "unknown class", http.StatusBadRequest)
-				return
-			}
-			if len(username) < 1 {
-				fail(w, "invalid user", http.StatusBadRequest)
-				return
-			}
-
-			usernameHeader, ok := r.Header["X-Client-Cert-Dn"]
-			if !ok {
-				fail(w, "missing client cert DN", http.StatusBadRequest)
-				return
-			}
-			if verbose {
-				log.Printf("client cert dn: %s\n", usernameHeader[0])
-			}
-			if usernameHeader[0] != "CN="+username {
-				fail(w, fmt.Sprintf("client cert (%s) != path username (%s)", usernameHeader[0], username), http.StatusBadRequest)
-				return
-			}
-			err := r.ParseMultipartForm(256 << 20) // limit file size to 256MB
-			if err != nil {
-				fail(w, fmt.Sprintf("failed parsing upload form: %v", err), http.StatusBadRequest)
-				return
-			}
-
-			uploadFile, _, err := r.FormFile("file")
-			if err != nil {
-				fail(w, fmt.Sprintf("failed retreiving upload file: %v", err), http.StatusBadRequest)
-				return
-			}
-			defer uploadFile.Close()
-
-			sample := NewSample(class, username)
-			_, err = io.Copy(sample.buf, uploadFile)
-			if err != nil {
-				fail(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-
-			queue <- sample
-			queueCount++
-			if verbose {
-				log.Printf("queued %s %s sample: queueCount=%d dequeCount=%d\n", username, class, queueCount, dequeueCount)
-			}
-
-			return
-		}
-	default:
-		fail(w, "error", http.StatusMethodNotAllowed)
-		return
-
-	}
-	fail(w, "WAT?", http.StatusNotFound)
-
-}
-
 func Banner() string {
 	return fmt.Sprintf("mctsd v%s", Version)
 }
 
 func runServer(addr *string, port *int) {
 
-	queue = make(chan *Sample, QUEUE_SIZE)
+	err := handler.Init(QUEUE_SIZE)
+	if err != nil {
+		log.Fatalln("Handler.Init failed: ", err)
+	}
 	var wg sync.WaitGroup
 	listen := fmt.Sprintf("%s:%d", *addr, *port)
 	server := &http.Server{
 		Addr:    listen,
-		Handler: http.HandlerFunc(handleEndpoints),
+		Handler: http.HandlerFunc(handler.HandleEndpoints),
 	}
 
 	go func() {
 		wg.Add(1)
 		defer wg.Done()
-		for job := range queue {
-			dequeueCount++
+		for job := range handler.Queue {
+			handler.DequeueCount++
 			if verbose {
-				log.Printf("Dequeued %s %s sample: queueCount=%d dequeueCount=%d\n", job.username, job.class, queueCount, dequeueCount)
+				log.Printf("Dequeued %s %s sample: queueCount=%d dequeueCount=%d\n", job.Username, job.Class, handler.QueueCount, handler.DequeueCount)
 			}
 			job.Submit()
 		}
@@ -216,17 +79,17 @@ func runServer(addr *string, port *int) {
 	ctx, cancel := context.WithTimeout(context.Background(), SHUTDOWN_TIMEOUT*time.Second)
 	defer cancel()
 
-	err := server.Shutdown(ctx)
+	err = server.Shutdown(ctx)
 	if err != nil {
 		log.Fatalln("Server Shutdown failed: ", err)
 	}
 	log.Println("shutdown complete")
 
-	log.Printf("queueCount=%d dequeueCount=%d\n", queueCount, dequeueCount)
-	if queueCount != dequeueCount {
+	log.Printf("queueCount=%d dequeueCount=%d\n", handler.QueueCount, handler.DequeueCount)
+	if handler.QueueCount != handler.DequeueCount {
 		log.Println("draining submission queue...")
 	}
-	close(queue)
+	close(handler.Queue)
 	wg.Wait()
 	log.Println("submissions completed.")
 }
@@ -253,8 +116,13 @@ func main() {
 		fmt.Printf("%s\n", Banner())
 		os.Exit(0)
 	}
-	verbose = *verboseFlag
-	if !*debugFlag {
+	if *verboseFlag {
+		verbose = true
+		handler.Verbose = true
+	}
+	if *debugFlag {
+		handler.Debug = true
+	} else {
 		daemonize(addr, port)
 		os.Exit(0)
 	}

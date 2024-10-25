@@ -8,7 +8,7 @@ run:
 	./$(bin)
 
 fmt:
-	fix go fmt
+	fix go fmt ./...
 
 clean:
 	go clean

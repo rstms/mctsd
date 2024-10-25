@@ -22,7 +22,7 @@ const SHUTDOWN_TIMEOUT = 5
 const QUEUE_SIZE = 256 * 1024
 const DEFAULT_PORT = 2015
 
-const Version = "0.1.2"
+const Version = "0.1.3"
 
 var verbose bool
 
